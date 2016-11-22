@@ -22,7 +22,7 @@ Commands = {
   'HV3_ON':13,
   'HV4_ON':14,
   'Status':205,
-  'ErrorCode':206
+  'ErrorCode':206,
   'Model': 319,
   
   'SerialNumber':323,
@@ -95,7 +95,7 @@ def get_crc(data,acc=0):
 def get_value(value,t=None):
   if isinstance(value,(float,int)):
     return '%06.3f'%value
-  elif isinstance(value,str)::
+  elif isinstance(value,str):
     return '%10s'%value
   else:
     return '1' if value else '0'
