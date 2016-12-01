@@ -88,7 +88,8 @@ def get_crc(data,acc=0):
   XOR of all characters, ETX included but not STX.
   Return as hexadecimal code in 2 characters.
   '''
-  for d in data: acc = acc^d
+  acc = data[0]
+  for d in data[1:]: acc = acc^d
   acc = format(acc,'x')
   return [int(v,16) for v in acc]
 
@@ -102,15 +103,21 @@ def get_value(value,t=None):
 
 def pack_window_message(comm,value=None):
   comm = Commands.get(comm,comm)
-  data = [RS232,comm]
+  if isinstance(comm,int):
+    comm = map(ord,str(comm))
+  data = [RS232]+comm
+  print('pack_window_message(%s,%s)'%(['%x'%d for d in data],value))
   if value is not None:
     data.append(WRITE)
     data.extend(value)
   else:
     data.append(READ)
   data.append(ETX)
-  data.extend(get_crc(data))
+  crc = get_crc(data)
+  print('CRC(%s) => %s'%(data,crc))
+  data.extend([ord('%x'%(i)) for i in crc])
   data.insert(0,STX)
+  print(['%x'%i for i in data])
   return data
 
 def unpack_window_message(msg):
