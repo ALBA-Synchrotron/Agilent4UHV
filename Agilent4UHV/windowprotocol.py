@@ -16,7 +16,7 @@ ERROR = 0x33
 OUTR = 0x34
 DISABLED = 0x35
 
-Commands = {
+Commands = fandango.CaselessDict({
   'HV1_ON':11,
   'HV2_ON':12,
   'HV3_ON':13,
@@ -81,17 +81,22 @@ Commands = {
   'I4':841,
   'P4':842,
 
-  }
+  })
   
 def get_crc(data,acc=0):
   '''
   XOR of all characters, ETX included but not STX.
   Return as hexadecimal code in 2 characters.
   '''
-  acc = data[0]
+  acc,icc,xcc = data[0],'',''
   for d in data[1:]: acc = acc^d
-  acc = format(acc,'x')
-  return [int(v,16) for v in acc]
+  xcc = acc = list(format(acc,'x').upper())
+  #icc = [int(v,16) for v in acc]
+  #xcc = [('%x'%(i)).upper() for i in icc]
+  crc = map(ord,xcc)
+  #print('CRC(%s) => %s => %s => %s => %s '%(
+    #data,acc,icc,xcc,crc))
+  return crc
 
 def get_value(value,t=None):
   if isinstance(value,(float,int)):
@@ -102,11 +107,12 @@ def get_value(value,t=None):
     return '1' if value else '0'
 
 def pack_window_message(comm,value=None):
-  comm = Commands.get(comm,comm)
-  if isinstance(comm,int):
-    comm = map(ord,str(comm))
-  data = [RS232]+comm
-  print('pack_window_message(%s,%s)'%(['%x'%d for d in data],value))
+  ncomm = Commands.get(comm,comm)
+  print('pack_window_message(%s => %s)'%(comm,ncomm))
+  if isinstance(ncomm,int):
+    ncomm = map(ord,str(ncomm))
+  data = [RS232]+list(ncomm)
+  #print('pack_window_message(%s,%s)'%(['%x'%d for d in data],value))
   if value is not None:
     data.append(WRITE)
     data.extend(value)
@@ -114,11 +120,25 @@ def pack_window_message(comm,value=None):
     data.append(READ)
   data.append(ETX)
   crc = get_crc(data)
-  print('CRC(%s) => %s'%(data,crc))
-  data.extend([ord('%x'%(i)) for i in crc])
+  data.extend(crc)
   data.insert(0,STX)
   print(['%x'%i for i in data])
   return data
 
 def unpack_window_message(msg):
-  return dict()
+  data = list(msg)
+  #print('unpack_window_message(%s)'%data)
+  data.pop(0) #STX
+  a = data.pop(0) #Address)
+  crc,data = data[-2:],data[:-2]
+  e = data.pop(-1) #ETX
+  assert data != ['\x15'], 'NACK Received!'
+  w,data = data[:3],data[3:] #Window
+  c = data.pop(0) #Comm
+  return fandango.Struct({
+    'data':data,'CRC':crc,
+    'command':c,'window':w,
+    'address':a
+    })
+  
+  
