@@ -2,7 +2,7 @@
 # Always prefer setuptools over distutils
 from setuptools import setup, find_packages
 
-DS = 'VarianDUAL'
+DS = 'Agilent4UHV'
 description = '%s Tango Device Server'%DS
 version = '4.5.0'
 package = DS #'tangods-'+DS.lower()
