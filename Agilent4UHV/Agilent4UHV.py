@@ -36,7 +36,7 @@ class Agilent4UHV(Dev4Tango):
     self.lg.info("init_device()")
     self.get_device_properties(self.get_device_class())
     self.info('LogLevel = %s'%self.getLogLevel())
-    self.set_state(DevState.INIT)
+    self.set_state(DevState.ON)
     self.last_comm = 0
     self.exception = ''
     self.serial = DeviceProxy(self.SerialLine)
@@ -45,23 +45,9 @@ class Agilent4UHV(Dev4Tango):
       write_method = self.send_command,
       timewait = self.TimeWait,
       )
- 
-    ### Creating Dynamic Attributes
-    #for i in range(self.NChannels):
-        ##for key,values,unit,format in (('P','pressures','mbar','%1.2e'),('V','voltages','kV','%1.2f'),('I','currents','mA','%1.2e')):
-        #for key,values,unit,format in (('P','pressures','mbar','%1.2e'),('I','currents','A','%1.2e')):
-            #attrname = '%s%d'%(key,(i+1))
-            #attrib = PyTango.Attr(attrname,PyTango.DevDouble, PyTango.AttrWriteType.READ)
-            #props = PyTango.UserDefaultAttrProp(); props.set_format(format); props.set_unit(unit)
-            #attrib.set_default_properties(props)
-            #self.attribs[attrname] = (i,values)
-            ##fun = (lambda self,attr,index=i,value=values: attr.set_value(index<self.NChannels and float(getattr(self,value)[index]) or 0.0))
-            #self.log.info('Creating attribute %s ...'%attrib)
-            #self.add_attribute(attrib,self.read_dyn_attr,None,self.is_dyn_allowed)
     
     self.dyn_attr()
-    
-    #self.thread.start()
+    self.thread.start()
     self.info("Ready to accept request ...")
     self.info('-'*80)
     
@@ -81,6 +67,12 @@ class Agilent4UHV(Dev4Tango):
         self.add_attribute(attrib,self.read_dyn_attr,None,self.is_Attr_allowed)
         
       self.thread.append(l+n,period=self.Refresh)
+      
+    for a in ('Model','ErrorCode'):
+      self.info('Adding attribute: %s'%(a))
+      attrib = PyTango.Attr(a,PyTango.DevString, PyTango.AttrWriteType.READ)
+      self.add_attribute(attrib,self.read_dyn_attr,None,self.is_Attr_allowed)
+      self.thread.append(a,period=self.Refresh*5)
   
   def always_executed_hook(self):
     self.state_machine()
@@ -89,6 +81,7 @@ class Agilent4UHV(Dev4Tango):
   
   @catched
   def send_command(self,comm,value=None):
+    r,s = '',''
     try:
       data = WP.pack_window_message(comm,value)
       self.debug('send_command(%s,%s) => %s'%(comm,value,data))
@@ -98,13 +91,19 @@ class Agilent4UHV(Dev4Tango):
       assert r, 'NothingReceived!'
       self.last_comm = now()
       self.exception = ''
-      return r
     except Exception, e:
       self.error('send_command(%s):\n %s'%(comm,traceback.format_exc()))
-      #print getLastException()
       self.exception = str(e)
       #PyTango.Except.throw_exception("Agilent4UHV Exception",str(e),str(e))
-      return ''
+      return r
+
+    try:
+        s = WP.unpack_window_message(r).data
+        s = ''.join(s) if isSequence(map(str,s)) else str(s)
+    except Exception,e:
+        traceback.print_exc()
+        raise e
+    return s
     
   @catched
   def state_machine(self):
@@ -124,31 +123,57 @@ class Agilent4UHV(Dev4Tango):
       self.set_status(status)
     except:
       self.error(traceback.format_exc())
+      
+  def is_Attr_allowed(self,*args):
+    self.debug('In is_Attr_allowed(%s)'%str(args))
+    return True
   
   def read_dyn_attr(self,attr):
     attrname = attr.get_name().upper()
-    self.debug('In read_dyn_attr(%s)'%attrname)
-    attr.set_value(float(self.thread[attrname]))
+    self.info('In read_dyn_attr(%s)'%attrname)
+    try:
+      if not self.thread.get(attrname):
+        try:
+          alive = self.thread.alive()
+          alive and self.thread.stop()      
+          self.thread.__getitem__(attrname,hw=True)
+          self.thread._updates[attrname] = time.time()
+        except Exception,e:
+          traceback.print_exc()
+          raise e
+        finally:
+          alive and self.thread.start()
+
+      v = self.thread[attrname]
+      self.debug('%s: %s'%(attrname,v))
+      try:
+        attr.set_value(float(v))
+      except:
+        attr.set_value(v)
+    except Exception,e:
+      traceback.print_exc()
+      raise e
     
-    
-    #index,value = self.attribs[attrname]
-    #value = index<self.NChannels and float(getattr(self,value,[0.]*(index+1))[index] or 0.0)
-    #if not self.read_CableEnabled()[index] and any(v>0.0 for v in (self.voltages[index],self.currents[index],self.pressures[index])): 
-        #quality = PyTango.AttrQuality.ATTR_ALARM
-    #else: quality = PyTango.AttrQuality.ATTR_VALID
-    #attr.set_value_date_quality(value,time.time(),quality)
+  def read_LastUpdate(self,attr):
+    attr.set_value(self.thread.get_last_update())
   
   def SendCommand(self,argin):
-    argin = toSequence(argin)
+    s,argin = '',toSequence(argin)
     comm,value = argin[0],(argin[1:] or (None,))[0]
     try:
       alive = self.thread.alive()
       alive and self.thread.stop()
-      r = self.send_command(comm,value)
-      self.info('SendCommand(%s) <= %s'%(argin,r))
-      return r
+      s = self.send_command(comm,value)
+      self.info('SendCommand(%s) <= %s'%(argin,s))
+      return s
     finally:
       alive and self.thread.start()
+      
+  def Pause(self):
+    self.thread.stop()
+    
+  def Resume(self):
+    self.thread.start()
   
   
 class Agilent4UHVClass(DeviceClass):
@@ -187,24 +212,18 @@ class Agilent4UHVClass(DeviceClass):
              {
                 'Display level': PyTango.DispLevel.EXPERT,
             }],
+          'Pause': [[PyTango.DevVoid, ""],[PyTango.DevVoid,""]],
+          'Resume': [[PyTango.DevVoid, ""],[PyTango.DevVoid,""]],
           }
+             
+    attr_list = dict(getattr(Dev4Tango,'attr_list',{}))
              
     @staticmethod
     def get_default_attr(name='',unit='',format='%5.2e'):
       return [[PyTango.DevDouble,PyTango.SCALAR,PyTango.READ],
         {'unit': "mA",'format': "%5.2e",'description':name}]
 
-    #attr_list = dict(
-      #[a for i in '1234' for a in [
-        #('V'+i,get_default_attr('V'+i,'V','%5d')),
-        #('P'+i,get_default_attr('P'+i,'mbar','%5.2e')),
-        #('I'+i,get_default_attr('I'+i,'mA','%5.2e'))
-        #])
-
-    #def __init__(self, name):
-        #PyTango.DeviceClass.__init__(self, name)
-        #self.set_type(name)
-        #print "In Agilent4UHVClass  constructor"
+##############################################################################
         
 def main(args):
     try:
@@ -218,9 +237,9 @@ def main(args):
         U.server_run()
 
     except PyTango.DevFailed, e:
-        print '-------> Received a DevFailed exception:', e
+        print('-------> Received a DevFailed exception:', e)
     except Exception, e:
-        print '-------> An unforeseen exception occured....', e  
+        print('-------> An unforeseen exception occured....', e)
   
 if __name__ == '__main__':
   import sys
