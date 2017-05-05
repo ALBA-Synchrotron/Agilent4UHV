@@ -8,7 +8,7 @@ import windowprotocol as WP
 from fandango import Dev4Tango
 from fandango.functional import *
 from fandango.threads import wait
-from fandango.dicts import ThreadDict
+from fandango.dicts import ThreadDict,reversedict
 from PyTango import Device_4Impl,DevState,DevFailed,DeviceClass,DeviceProxy
 
 def catched(f):
@@ -68,8 +68,8 @@ class Agilent4UHV(Dev4Tango):
         
       self.thread.append(l+n,period=self.Refresh)
       
-    for a in ('Model','ErrorCode'):
-      self.info('Adding attribute: %s'%(a))
+    for a in ('Model','ErrorCode','ModeLocal'):
+      self.info('Adding attribute (%d s): %s'%(self.Refresh*5,a))
       attrib = PyTango.Attr(a,PyTango.DevString, PyTango.AttrWriteType.READ)
       self.add_attribute(attrib,self.read_dyn_attr,None,self.is_Attr_allowed)
       self.thread.append(a,period=self.Refresh*5)
@@ -131,11 +131,12 @@ class Agilent4UHV(Dev4Tango):
     self.debug('In is_Attr_allowed(%s)'%str(args))
     return True
   
-  def read_dyn_attr(self,attr):
-    attrname = attr.get_name().upper()
-    self.info('In read_dyn_attr(%s)'%attrname)
+  def read_dyn_attr(self,attr,hw=False):
+    attrname = (attr if isString(attr) else attr.get_name()).upper()
+    (self.info if hw else self.debug)(
+            'In read_dyn_attr(%s,%s)'%(attrname,hw))
     try:
-      if not self.thread.get(attrname):
+      if hw or not self.thread.get(attrname):
         # If it's the first reading, force a hardware update
         try:
           alive = self.thread.alive()
@@ -150,11 +151,14 @@ class Agilent4UHV(Dev4Tango):
 
       # Read last cached value
       v = self.thread[attrname]
+      if attrname == 'MODELOCAL': v = reversedict(WP.Modes)[v]
       self.debug('%s: %s'%(attrname,v))
-      try:
-        attr.set_value(float(v))
-      except:
-        attr.set_value(v)
+      if not isString(attr):
+        try:
+          attr.set_value(float(v))
+        except:
+          attr.set_value(v)
+      return v
     except Exception,e:
       traceback.print_exc()
       raise e
@@ -206,6 +210,11 @@ class Agilent4UHV(Dev4Tango):
 
   def SetMode(self,argin):
     assert argin in ('SERIAL','LOCAL','REMOTE'),'WrongMode!'
+    v = WP.Modes[argin]
+    r = str(self.SendCommand([('ModeLocal',v)],throw=True))
+    wait(self.TimeWait)
+    # read_dyn_attr is called to force Cache update
+    return self.read_dyn_attr('ModeLocal',hw=True)
       
   def Pause(self,alive=False):
     alive = alive or self.thread.alive() 

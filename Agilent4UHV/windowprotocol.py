@@ -21,6 +21,8 @@ DISABLED = 0x35
 ERRORS = {0x06:'ACK',0x15:'NACK',0x32:'UNKNOWN',
           0x33:'ERROR',0x34:'OUTR',0x35:'DISABLED'}
 
+Modes ={'SERIAL':'000000','REMOTE':'000001','LOCAL':'000002'} 
+
 Commands = fandango.CaselessDict({
   'HV1_ON':11,
   'HV2_ON':12,
@@ -29,6 +31,7 @@ Commands = fandango.CaselessDict({
   'Status':205,
   'ErrorCode':206,
   'Model': 319,
+  'ModeLocal': 8,
   
   'SerialNumber':323,
   'SerialType':504,
@@ -164,7 +167,7 @@ def unpack_window_message(msg,trace=False):
     c = data.pop(0) if data else ''#Comm
   else:
     w,c = '',data.pop(0)
-    assert c == ACK, '%s Error Received!'%ERRORS.get(ord(c),'Unknown')
+    assert ord(c) == ACK, '%s Error Received!'%ERRORS.get(ord(c),'Unknown')
     
   return fandango.Struct({
     'data':data,'CRC':crc,
