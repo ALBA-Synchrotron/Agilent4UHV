@@ -3,6 +3,8 @@ import fandango
 
 #data = 0x02,0x80,0x38,0x31,0x32,0x30,0x03,0x38,0x38
 
+TRACE = False
+
 STX = 0x02
 RS232 = 0x80
 READ = 0x30
@@ -15,6 +17,9 @@ UNKNOWN = 0x32
 ERROR = 0x33
 OUTR = 0x34
 DISABLED = 0x35
+
+ERRORS = {0x06:'ACK',0x15:'NACK',0x32:'UNKNOWN',
+          0x33:'ERROR',0x34:'OUTR',0x35:'DISABLED'}
 
 Commands = fandango.CaselessDict({
   'HV1_ON':11,
@@ -82,6 +87,10 @@ Commands = fandango.CaselessDict({
   'P4':842,
 
   })
+
+def str2bytes(seq):
+    """ Converts an string to a list of integers """
+    return map(ord,str(seq))
   
 def get_crc(data,acc=0):
   '''
@@ -90,13 +99,18 @@ def get_crc(data,acc=0):
   '''
   acc,icc,xcc = data[0],'',''
   for d in data[1:]: acc = acc^d
-  xcc = acc = list(format(acc,'x').upper())
+  #xcc = acc = list(format(acc,'x').upper())
+  #crc = map(ord,xcc)
+  #return crc
+  
+  xcc = format(acc,'x').upper()
+  return str2bytes(xcc)
+  
   #icc = [int(v,16) for v in acc]
   #xcc = [('%x'%(i)).upper() for i in icc]
-  crc = map(ord,xcc)
+  
   #print('CRC(%s) => %s => %s => %s => %s '%(
     #data,acc,icc,xcc,crc))
-  return crc
 
 def get_value(value,t=None):
   if isinstance(value,(float,int)):
@@ -106,35 +120,52 @@ def get_value(value,t=None):
   else:
     return '1' if value else '0'
 
-def pack_window_message(comm,value=None):
+def pack_window_message(comm,value=None,trace=False):
   ncomm = Commands.get(comm,comm)
-  print('pack_window_message(%s => %s)'%(comm,ncomm))
-  if isinstance(ncomm,int):
-    ncomm = map(ord,str(ncomm))
-  data = [RS232]+list(ncomm)
-  #print('pack_window_message(%s,%s)'%(['%x'%d for d in data],value))
+  if TRACE or trace:
+    print('pack_window_message(%s => %s)'%(comm,ncomm))
+  if isinstance(ncomm,int): 
+    ncomm = '%03d'%ncomm
+  data = [RS232]+str2bytes(ncomm) #list(ncomm)
+  if TRACE or trace:
+    print('pack_window_message(%s,%s)'%(['%x'%d for d in data],value))
   if value is not None:
     data.append(WRITE)
-    data.extend(value)
+    try:
+      if str(value) not in '01': 
+        if fandango.matchCl('^[\-0-9]+$',str(value)): 
+          value = '%06d'%int(value)
+        else:
+          value = '%10s'%('%4.1e'%float(value))
+    except Exception,e: 
+      print('pack_window_message(%s) failed!: %s'%(value,e))
+    data.extend(str2bytes(value))
   else:
     data.append(READ)
   data.append(ETX)
   crc = get_crc(data)
   data.extend(crc)
   data.insert(0,STX)
-  print(['%x'%i for i in data])
+  if TRACE or trace:
+    print(['%x'%i for i in data])
   return data
 
-def unpack_window_message(msg):
+def unpack_window_message(msg,trace=False):
   data = list(msg)
-  #print('unpack_window_message(%s)'%data)
+  if TRACE or trace:
+    print('unpack_window_message(%s[%d])'%(data,len(data)))
   data.pop(0) #STX
   a = data.pop(0) #Address)
   crc,data = data[-2:],data[:-2]
   e = data.pop(-1) #ETX
-  assert data != ['\x15'], 'NACK Received!'
-  w,data = data[:3],data[3:] #Window
-  c = data.pop(0) #Comm
+  
+  if len(data)>=3:
+    w,data = data[:3],data[3:] #Window
+    c = data.pop(0) if data else ''#Comm
+  else:
+    w,c = '',data.pop(0)
+    assert c == ACK, '%s Error Received!'%ERRORS.get(ord(c),'Unknown')
+    
   return fandango.Struct({
     'data':data,'CRC':crc,
     'command':c,'window':w,

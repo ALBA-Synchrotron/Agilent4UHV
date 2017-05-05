@@ -79,12 +79,13 @@ class Agilent4UHV(Dev4Tango):
     
   #############################################################################
   
-  @catched
-  def send_command(self,comm,value=None):
+  #@catched
+  def send_command(self,comm,value=None,throw=False):
     r,s = '',''
     try:
       data = WP.pack_window_message(comm,value)
-      self.debug('send_command(%s,%s) => %s'%(comm,value,data))
+      (self.info if throw else self.debug)(
+        'send_command(%s,%s) => %s'%(comm,value,data))
       [self.serial.DevSerWriteChar([t]) for t in data]
       wait(self.TimeWait)
       r = self.serial.DevSerReadRaw()
@@ -94,7 +95,9 @@ class Agilent4UHV(Dev4Tango):
     except Exception, e:
       self.error('send_command(%s):\n %s'%(comm,traceback.format_exc()))
       self.exception = str(e)
-      #PyTango.Except.throw_exception("Agilent4UHV Exception",str(e),str(e))
+      if throw:
+        raise e
+        #PyTango.Except.throw_exception("Agilent4UHV Exception",str(e),str(e))
       return r
 
     try:
@@ -118,7 +121,7 @@ class Agilent4UHV(Dev4Tango):
       status += '\n'
       if self.exception:
         status += '\nLast error was %s\n\n'%(self.exception[:80])
-      for k,v in self.thread.items():
+      for k,v in sorted(self.thread.items()):
         status += '\n%s:%s'%(k,v)
       self.set_status(status)
     except:
@@ -133,6 +136,7 @@ class Agilent4UHV(Dev4Tango):
     self.info('In read_dyn_attr(%s)'%attrname)
     try:
       if not self.thread.get(attrname):
+        # If it's the first reading, force a hardware update
         try:
           alive = self.thread.alive()
           alive and self.thread.stop()      
@@ -144,6 +148,7 @@ class Agilent4UHV(Dev4Tango):
         finally:
           alive and self.thread.start()
 
+      # Read last cached value
       v = self.thread[attrname]
       self.debug('%s: %s'%(attrname,v))
       try:
@@ -156,25 +161,92 @@ class Agilent4UHV(Dev4Tango):
     
   def read_LastUpdate(self,attr):
     attr.set_value(self.thread.get_last_update())
-  
-  def SendCommand(self,argin):
-    s,argin = '',toSequence(argin)
-    comm,value = argin[0],(argin[1:] or (None,))[0]
-    try:
-      alive = self.thread.alive()
-      alive and self.thread.stop()
-      s = self.send_command(comm,value)
-      self.info('SendCommand(%s) <= %s'%(argin,s))
-      return s
-    finally:
-      alive and self.thread.start()
-      
-  def Pause(self):
-    self.thread.stop()
     
-  def Resume(self):
-    self.thread.start()
+  ##############################################################################
+  # Public Methods
   
+  def SendCommand(self,argin,throw=True):
+    """
+    Argin can be "command", ("command","value") 
+    or a sequence of [(c,v)] pairs
+    """
+    s,argin = '',toSequence(argin)
+    if not isSequence(argin[0]): argin = [argin]
+    try:
+      self.Pause()
+      WP.TRACE = True
+      for arr in argin:
+        comm,value = arr[0],(arr[1:] or (None,))[0]
+        s = self.send_command(comm,value,throw=throw)
+        self.info('SendCommand(%s) <= %s'%(argin,s))
+        
+      return s
+    except Exception,e:
+      traceback.print_exc()
+      if throw: 
+        print('!'*80)
+        raise e
+    finally:
+      WP.TRACE = False
+      self.Resume()
+      
+  #def SendDualCommand(self,argin=None):
+    #""" Send commands using the old Dual protocol
+    #"""
+    #msg = [0x81,2+1+0,ord('Z'),ord('0'),0x30,]
+    #crc = 0x7f
+    #for d in msg: crc = crc^d
+    #msg.append(crc)
+    #print(msg)
+    #self.Pause()
+    #[self.serial.DevSerWriteChar([t]) for t in data]
+    #wait(self.TimeWait)
+    #r = self.serial.DevSerReadRaw()
+    #self.Resume()
+
+  def SetMode(self,argin):
+    assert argin in ('SERIAL','LOCAL','REMOTE'),'WrongMode!'
+      
+  def Pause(self,alive=False):
+    alive = alive or self.thread.alive() 
+    if alive: self.thread.stop()
+    return alive
+    
+  def Resume(self,alive=False):
+    alive = alive or self.thread.alive()
+    if not alive: self.thread.start()
+    return alive
+    
+  def On(self):
+    return self.SendCommand()
+    
+  def OnHV1(self):
+    return str(self.SendCommand(('HV1_ON',1),throw=True))
+
+  def OnHV2(self):
+    return str(self.SendCommand(('HV2_ON',1),throw=True))
+    
+  def OnHV3(self):
+    return str(self.SendCommand(('HV3_ON',1),throw=True))
+
+  def OnHV4(self):
+    return str(self.SendCommand(('HV4_ON',1),throw=True))
+    
+  def Off(self):
+    return self.SendCommand()
+    
+  def OffHV1(self):
+    return str(self.SendCommand(('HV1_ON',0),throw=True))
+
+  def OffHV2(self):
+    return str(self.SendCommand(('HV2_ON',0),throw=True))
+
+  def OffHV3(self):
+    return str(self.SendCommand(('HV3_ON',0),throw=True))
+    
+  def OffHV4(self):
+    return str(self.SendCommand(('HV4_ON',0),throw=True))
+
   
 class Agilent4UHVClass(DeviceClass):
 
@@ -201,6 +273,10 @@ class Agilent4UHVClass(DeviceClass):
             [PyTango.DevString,
             "",
             [ 'INFO' ] ],
+        'DefaultStatus':
+            [PyTango.DevString,
+             "On/Off,On/Off; the expected status for each channel, empty if not used",
+             ['']],
             }            
             
     #    Command definitions
@@ -212,8 +288,82 @@ class Agilent4UHVClass(DeviceClass):
              {
                 'Display level': PyTango.DispLevel.EXPERT,
             }],
-          'Pause': [[PyTango.DevVoid, ""],[PyTango.DevVoid,""]],
-          'Resume': [[PyTango.DevVoid, ""],[PyTango.DevVoid,""]],
+        'SetMode':
+            [[PyTango.DevString, "Mode to set (LOCAL/SERIAL/REMOTE)"],
+             [PyTango.DevString,
+                "Mode to set"],
+             {
+                'Display level': PyTango.DispLevel.EXPERT,
+            }],
+        'Pause': [[PyTango.DevVoid, ""],[PyTango.DevVoid,""]],
+        'Resume':
+          [[PyTango.DevVoid, ""],[PyTango.DevVoid,""]],
+        'On':
+            [[PyTango.DevShort, "With 0, switches On all High voltage channels"
+              " (managed by DefaultStatus)"],
+             [PyTango.DevString,
+                "With 0, switches On all High voltage channels"
+              " (managed by DefaultStatus)"],
+             {
+                'Display level': PyTango.DispLevel.EXPERT,
+            }],
+        'Off':
+            [[PyTango.DevShort, "With 0, switchs Off all High voltage channels"
+              " (managed by DefaultStatus)"],
+             [PyTango.DevString,
+                "With 0, switches On all High voltage channels"
+              " (managed by DefaultStatus)"],
+             {
+                'Display level': PyTango.DispLevel.EXPERT,
+            }],
+        'OnHV1':
+            [[PyTango.DevVoid, "Switchs On the High voltage channel"],
+             [PyTango.DevString, "Switchs On the High voltage channel"],
+             {
+                'Display level': PyTango.DispLevel.EXPERT,
+            }],
+        'OffHV1':
+            [[PyTango.DevVoid, "Switchs Off the High voltage channel"],
+             [PyTango.DevString, "Switchs Off the High voltage channel"],
+             {
+                'Display level': PyTango.DispLevel.EXPERT,
+            }],
+        'OnHV2':
+            [[PyTango.DevVoid, "Switchs On the High voltage channel"],
+             [PyTango.DevString, "Switchs On the High voltage channel"],
+             {
+                'Display level': PyTango.DispLevel.EXPERT,
+            }],
+        'OffHV2':
+            [[PyTango.DevVoid, "Switchs Off the High voltage channel"],
+             [PyTango.DevString, "Switchs Off the High voltage channel"],
+             {
+                'Display level': PyTango.DispLevel.EXPERT,
+            }],
+        'OnHV3':
+            [[PyTango.DevVoid, "Switchs On the High voltage channel"],
+             [PyTango.DevString, "Switchs On the High voltage channel"],
+             {
+                'Display level': PyTango.DispLevel.EXPERT,
+            }],
+        'OffHV3':
+            [[PyTango.DevVoid, "Switchs Off the High voltage channel"],
+             [PyTango.DevString, "Switchs Off the High voltage channel"],
+             {
+                'Display level': PyTango.DispLevel.EXPERT,
+            }],
+        'OnHV4':
+            [[PyTango.DevVoid, "Switchs On the High voltage channel"],
+             [PyTango.DevString, "Switchs On the High voltage channel"],
+             {
+                'Display level': PyTango.DispLevel.EXPERT,
+            }],
+        'OffHV4':
+            [[PyTango.DevVoid, "Switchs Off the High voltage channel"],
+             [PyTango.DevString, "Switchs Off the High voltage channel"],
+             {
+                'Display level': PyTango.DispLevel.EXPERT,
+            }],
           }
              
     attr_list = dict(getattr(Dev4Tango,'attr_list',{}))
