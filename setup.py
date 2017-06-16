@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 DS = 'Agilent4UHV'
 description = '%s Tango Device Server'%DS
 version = '4.5.0'
-package = DS #'tangods-'+DS.lower()
+package = 'tangods-'+DS.lower()
 
 __doc__ = """
 Generic Device Server setup.py file copied from fandango/scripts/setup.ds.py
@@ -68,9 +68,19 @@ entry_points = {
         #],
 }
 
+author = 'srubio@cells.es'
+url = 'https://git.cells.es/controls/Agilent4UHV'
+author_email = maintainer_email = maintainer = author
+download_url = url
 
 setup(
     name=package,
+    author=author,
+    author_email=author,
+    maintainer=author,
+    maintainer_email=author,
+    url=url,
+    download_url=url,
     version=version,
     license=license,
     description=description,
